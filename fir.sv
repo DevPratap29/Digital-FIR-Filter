@@ -69,21 +69,23 @@ endmodule
 
 module fir_tb;
 logic clk;
-logic reset;
+logic rst;
 logic signed [15:0] x_in;
 logic signed [15:0] y_out;
 fir dut (.clk(clk),.rst(rst),.x_in(x_in),.y_out(y_out));
 always #5 clk = ~clk;
 initial begin
 clk = 0;
-reset = 1;
+rst = 1;
 x_in = '0;
 #20;
-reset = 0;
+rst = 0;
 repeat (15) begin
 #10 x_in = x_in + 8'sd1;
 end
 #160;
+rst=1;
+#180;
 $finish;
 end
 initial begin
