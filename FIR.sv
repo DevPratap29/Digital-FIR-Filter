@@ -4,16 +4,16 @@ module FIR(
     input logic clk,
     input logic rst,
     input logic signed [3:0] x_in,
-    output logic signed [7:0] y_out
+    output logic signed [11:0] y_out
 );
 logic clk_in;
   clk_wiz_0 instance_name
    (.clk_out1(clk_in),.reset(rst),.clk_in1(clk));
-localparam signed [3:0] h0=4'sd1;
-localparam signed [3:0] h1=4'sd2;
-localparam signed [3:0] h2=4'sd3;
-localparam signed [3:0] h3=4'sd4;
-localparam signed [3:0] h4=4'sd5;
+localparam signed [7:0] h0=8'sd0;
+localparam signed [7:0] h1=8'sd41;
+localparam signed [7:0] h2=8'sd64;
+localparam signed [7:0] h3=8'sd41;
+localparam signed [7:0] h4=8'sd0;
 logic signed [7:0] r0,r1,r2,r3;
 always @(posedge clk_in or posedge rst) begin
     if(rst) begin
