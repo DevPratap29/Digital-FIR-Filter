@@ -97,4 +97,4 @@ In particular, simultaneous events need a defined priority. In the current RTL, 
 
 ## Project status
 
-This repository is a work in progress. The current focus is on developing the RTL architecture and its coefficient configuration interface. Verification, documentation, and IP packaging can be expanded as the design matures.
+This repository is a work in progress.
