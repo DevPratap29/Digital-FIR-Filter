@@ -3,11 +3,11 @@
 ## What is an FIR filter?
 
 A **Finite Impulse Response (FIR)** filter processes sampled data by taking a weighted sum of the current input and a finite number of previous input samples:
-
+$$
 \[
 y[n] = \sum_{k=0}^{N-1} h[k]x[n-k]
 \]
-
+$$
 Here, \(x[n]\) is the input, \(h[k]\) are the filter coefficients (taps), and \(N\) is the number of taps. By choosing the coefficients, a designer can suppress noise, keep a desired frequency band, or shape a signal.
 
 ## Why choose FIR over IIR or analog filtering?
