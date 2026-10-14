@@ -24,13 +24,13 @@ The active coefficients are named `h0` through `h15`. These are the coefficients
 
 The transposed datapath uses the current input sample and active coefficients to update the output and internal state registers `r0` through `r14`. In simplified form, the RTL follows this pattern:
 
-\[
+$$
 y[n] = x[n]h_0 + r_0
-\]
+$$
 
-\[
+$$
 r_i \leftarrow x[n]h_{i+1} + r_{i+1}
-\]
+$$
 
 for the internal stages, with the final stage updated from the last coefficient product. The registers hold the partial sums between clock edges.
 
