@@ -1,18 +1,49 @@
 
+/*
+1. Assert RSTn, then remove reset.
+
+2. Load the impulse response coefficients for a bandpass filter with
+   cutoff frequencies pi/4 and 3*pi/4. Write the coefficients in random
+   address order rather than sequential order. Send COMMIT in the middle
+   of the coefficient writes, before all coefficients have been loaded.
+
+3. Let the filter run for some time so its response can be observed.
+
+4. Deassert FIREN to check whether the filter halts its operation.
+
+5. Assert FIREN again to resume normal operation.
+
+6. While the filter is operating normally, load new impulse response
+   coefficients for a high-pass filter with cutoff frequency 2*pi/3.
+   Write the coefficients in random address order and send COMMIT before
+   all coefficients have been loaded.
+
+7. Let the filter run for some time to observe its response with the
+   new high-pass filter coefficients.
+
+8. Deassert FIREN, then assert RSTn.
+
+9. Do not implement self-checking or automatic pass/fail logic. All
+   correctness checks will be performed manually by observing waveforms
+   and console output.
+
+10. Display all signal values on every rising clock edge in the Tcl
+    console. Do not print on falling clock edges.
+
+11. Display all active coefficient registers h[0:15], all shadow
+    coefficient registers s[0:15], and all datapath registers r[0:14],
+    along with the external signals and internal control signals.
+*/
+
 `timescale 1ns / 1ps
 
 module FIR_tb;
 
-    // =========================================================
-    // DUT INPUTS AND OUTPUTS -- MATCHING EXACT PORT WIDTHS
-    // =========================================================
     logic CLK;
     logic RSTn;
     logic FIREN;
-
     logic signed [11:0] x_in;
     logic signed [31:0] y_out;
-
     logic BUSY;
     logic CENWR;
     logic [3:0] CADDR;
@@ -21,46 +52,28 @@ module FIR_tb;
     logic COMMIT;
     logic DONE;
 
-    // =========================================================
-    // DUT INSTANTIATION
-    // =========================================================
     FIR dut (
-        .CLK    (CLK),
-        .RSTn   (RSTn),
-        .FIREN  (FIREN),
-        .x_in   (x_in),
-        .y_out  (y_out),
-        .BUSY   (BUSY),
-        .CENWR  (CENWR),
-        .CADDR  (CADDR),
-        .CDATA  (CDATA),
-        .SREADY (SREADY),
-        .COMMIT (COMMIT),
-        .DONE   (DONE)
+        .CLK(CLK),
+        .RSTn(RSTn),
+        .FIREN(FIREN),
+        .x_in(x_in),
+        .y_out(y_out),
+        .BUSY(BUSY),
+        .CENWR(CENWR),
+        .CADDR(CADDR),
+        .CDATA(CDATA),
+        .SREADY(SREADY),
+        .COMMIT(COMMIT),
+        .DONE(DONE)
     );
 
-    // =========================================================
-    // CLOCK: 100 MHz
-    // =========================================================
-    initial CLK = 1'b0;
+    initial CLK = 0;
     always #5 CLK = ~CLK;
 
-    // =========================================================
-    // COEFFICIENTS: SIGNED Q1.15 FIXED-POINT
-    //
-    // Bandpass: cutoff frequencies pi/4 and 3*pi/4
-    // Highpass: cutoff frequency 2*pi/3
-    //
-    // Coefficients are calculated using windowed-sinc FIR
-    // design, then quantized to signed 16-bit integers.
-    // =========================================================
     logic signed [15:0] bp_coeff [0:15];
     logic signed [15:0] hp_coeff [0:15];
 
-    integer i;
-
     initial begin
-        // 16-tap bandpass, Hamming window
         bp_coeff[ 0] = -16'sd60;
         bp_coeff[ 1] =  16'sd251;
         bp_coeff[ 2] =  16'sd574;
@@ -78,10 +91,6 @@ module FIR_tb;
         bp_coeff[14] =  16'sd251;
         bp_coeff[15] = -16'sd60;
 
-        // 15-tap highpass, Hamming window, cutoff 2*pi/3.
-        // The 16th hardware coefficient is zero.
-        // This preserves an odd-length, symmetric highpass
-        // design while still writing all 16 hardware slots.
         hp_coeff[ 0] = -16'sd103;
         hp_coeff[ 1] =  16'sd0;
         hp_coeff[ 2] =  16'sd455;
@@ -100,262 +109,188 @@ module FIR_tb;
         hp_coeff[15] =  16'sd0;
     end
 
-    // =========================================================
-    // DETERMINISTIC INPUT SIGNAL
-    //
-    // x[n] = 500 sin(pi*n/8)
-    //      + 700 sin(pi*n/2)
-    //      + 500 sin(5*pi*n/6)
-    //
-    // Components:
-    // pi/8   : below bandpass passband
-    // pi/2   : inside bandpass passband
-    // 5*pi/6 : above bandpass passband and above highpass cutoff
-    //
-    // The resulting samples fit within signed 12-bit range.
-    // =========================================================
     integer sample_index;
+    real pi;
+    real sample_value;
 
-    function automatic logic signed [11:0]
-        sample_for(input integer n);
-
-        real pi;
-        real value;
-
-        begin
-            pi = 3.141592653589793;
-
-            value =
-                  500.0 * $sin(pi * n / 8.0)
-                + 700.0 * $sin(pi * n / 2.0)
-                + 500.0 * $sin(5.0 * pi * n / 6.0);
-
-            sample_for = $rtoi(value);
-        end
-    endfunction
-
-    // Drive a new sample on each falling edge while enabled.
-    // The DUT consumes that sample on the following rising edge.
-    initial sample_index = 0;
+    initial begin
+        sample_index = 0;
+        pi = 3.141592653589793;
+    end
 
     always @(negedge CLK) begin
         if (RSTn && FIREN) begin
-            x_in <= sample_for(sample_index);
+            sample_value =
+                  500.0 * $sin(pi * sample_index / 8.0)
+                + 700.0 * $sin(pi * sample_index / 2.0)
+                + 500.0 * $sin(5.0 * pi * sample_index / 6.0);
+
+            x_in <= $rtoi(sample_value);
             sample_index <= sample_index + 1;
         end
     end
 
-    // =========================================================
-    // COEFFICIENT WRITE TASK
-    //
-    // CDATA[15:0] = signed coefficient.
-    // CDATA[31:16] = zero, as required by the DUT.
-    // One write per rising clock edge.
-    // =========================================================
-    task automatic write_coeff(
-        input logic [3:0] addr,
-        input logic signed [15:0] coeff
-    );
-        begin
-            @(negedge CLK);
-            CENWR = 1'b1;
-            CADDR = addr;
-            CDATA = {16'h0000, coeff};
-
-            @(negedge CLK);
-            CENWR = 1'b0;
-            CDATA = 32'h00000000;
-        end
-    endtask
-
-    // =========================================================
-    // COMMIT TASK
-    // One-clock pulse.
-    // =========================================================
-    task automatic send_commit;
-        begin
-            @(negedge CLK);
-            COMMIT = 1'b1;
-
-            @(negedge CLK);
-            COMMIT = 1'b0;
-        end
-    endtask
-
-    // =========================================================
-    // WAIT TASK
-    // =========================================================
-    task automatic wait_cycles(input integer count);
-        repeat (count) @(posedge CLK);
-    endtask
-
-    // =========================================================
-    // CONSOLE MONITOR
-    //
-    // Print once per rising edge, AFTER nonblocking assignments
-    // have settled. Includes all external signals and all
-    // active, shadow and datapath registers.
-    //
-    // This is observation only: no checking or pass/fail logic.
-    // =========================================================
-    always @(posedge CLK) begin
-        #1;
-
-        $display("");
-        $display("============================================================");
-        $display("TIME=%0t ns | CLK=%0b | RSTn=%0b | FIREN=%0b",
-                 $time, CLK, RSTn, FIREN);
-        $display("============================================================");
-
-        $display("INPUTS:");
-        $display("x_in=%0d  CENWR=%0b  CADDR=%0d  CDATA=0x%08h  COMMIT=%0b",
-                 $signed(x_in), CENWR, CADDR, CDATA, COMMIT);
-
-        $display("STATUS:");
-        $display("BUSY=%0b  DONE=%0b  SREADY=0x%04h",
-                 BUSY, DONE, SREADY);
-
-        $display("INTERNAL CONTROL:");
-        $display("CREQ=%0b  SRSTATUS=%0b  SWAP=%0b",
-                 dut.CREQ, dut.SRSTATUS, dut.SWAP);
-
-        $display("ACTIVE COEFFICIENTS h[0:15]:");
-        for (integer j = 0; j < 16; j = j + 1)
-            $display("h[%0d] = %0d", j, $signed(dut.h[j]));
-
-        $display("SHADOW COEFFICIENTS s[0:15]:");
-        for (integer j = 0; j < 16; j = j + 1)
-            $display("s[%0d] = %0d", j, $signed(dut.s[j]));
-
-        $display("DATAPATH REGISTERS r[0:14]:");
-        for (integer j = 0; j < 15; j = j + 1)
-            $display("r[%0d] = %0d", j, $signed(dut.r[j]));
-
-        $display("OUTPUT:");
-        $display("y_out = %0d", $signed(y_out));
-
-        $display("============================================================");
+    initial begin
+        $display("TIME CLK RSTn FIREN x_in CENWR CADDR CDATA COMMIT BUSY DONE SREADY CREQ SRSTATUS SWAP y_out");
     end
 
-    // =========================================================
-    // MAIN TEST SEQUENCE
-    // =========================================================
+    always @(posedge CLK) begin
+        #1;
+        $display("%0t  %b   %b    %b    %0d   %b     %0d     %08h  %b      %b    %b   %04h  %b    %b       %b   %0d",
+            $time, CLK, RSTn, FIREN, $signed(x_in),
+            CENWR, CADDR, CDATA, COMMIT, BUSY, DONE, SREADY,
+            dut.CREQ, dut.SRSTATUS, dut.SWAP, $signed(y_out)
+        );
+    end
+
     initial begin
+        RSTn = 0;
+        FIREN = 0;
+        x_in = 0;
+        CENWR = 0;
+        CADDR = 0;
+        CDATA = 0;
+        COMMIT = 0;
 
-        // -----------------------------------------------------
-        // INITIALIZE ALL DRIVEN CONTROL SIGNALS
-        // -----------------------------------------------------
-        RSTn   = 1'b0;
-        FIREN  = 1'b0;
-        x_in   = 12'sd0;
-        CENWR  = 1'b0;
-        CADDR  = 4'd0;
-        CDATA  = 32'd0;
-        COMMIT = 1'b0;
+        #40;
+        RSTn = 1;
+        FIREN = 1;
 
-        // -----------------------------------------------------
-        // PHASE 1: RESET, THEN RELEASE
-        // -----------------------------------------------------
-        wait_cycles(4);
+        #30;
 
-        @(negedge CLK);
-        RSTn  = 1'b1;
-        FIREN = 1'b1;
+        CENWR = 1;
+        CADDR = 4'd7;
+        CDATA = bp_coeff[7];
+        #10;
+        CADDR = 4'd2;
+        CDATA = bp_coeff[2];
+        #10;
+        CADDR = 4'd13;
+        CDATA = bp_coeff[13];
+        #10;
+        CADDR = 4'd0;
+        CDATA = bp_coeff[0];
+        #10;
+        CADDR = 4'd9;
+        CDATA = bp_coeff[9];
+        #10;
+        CADDR = 4'd4;
+        CDATA = bp_coeff[4];
+        #10;
+        CADDR = 4'd15;
+        CDATA = bp_coeff[15];
 
-        wait_cycles(3);
+        #10;
+        CENWR = 0;
+        COMMIT = 1;
+        #10;
+        COMMIT = 0;
 
-        // -----------------------------------------------------
-        // PHASE 2: LOAD BANDPASS COEFFICIENTS IN SHUFFLED ORDER
-        //
-        // COMMIT is deliberately sent after seven writes.
-        // The remaining writes happen while CREQ is pending.
-        // -----------------------------------------------------
-        write_coeff(4'd7,  bp_coeff[7]);
-        write_coeff(4'd2,  bp_coeff[2]);
-        write_coeff(4'd13, bp_coeff[13]);
-        write_coeff(4'd0,  bp_coeff[0]);
-        write_coeff(4'd9,  bp_coeff[9]);
-        write_coeff(4'd4,  bp_coeff[4]);
-        write_coeff(4'd15, bp_coeff[15]);
+        CENWR = 1;
+        CADDR = 4'd1;
+        CDATA = bp_coeff[1];
+        #10;
+        CADDR = 4'd11;
+        CDATA = bp_coeff[11];
+        #10;
+        CADDR = 4'd6;
+        CDATA = bp_coeff[6];
+        #10;
+        CADDR = 4'd3;
+        CDATA = bp_coeff[3];
+        #10;
+        CADDR = 4'd14;
+        CDATA = bp_coeff[14];
+        #10;
+        CADDR = 4'd8;
+        CDATA = bp_coeff[8];
+        #10;
+        CADDR = 4'd5;
+        CDATA = bp_coeff[5];
+        #10;
+        CADDR = 4'd12;
+        CDATA = bp_coeff[12];
+        #10;
+        CADDR = 4'd10;
+        CDATA = bp_coeff[10];
+        #10;
+        CENWR = 0;
+        CDATA = 0;
 
-        // Early commit: only 7 of 16 coefficients are written.
-        send_commit();
+        #400;
 
-        write_coeff(4'd1,  bp_coeff[1]);
-        write_coeff(4'd11, bp_coeff[11]);
-        write_coeff(4'd6,  bp_coeff[6]);
-        write_coeff(4'd3,  bp_coeff[3]);
-        write_coeff(4'd14, bp_coeff[14]);
-        write_coeff(4'd8,  bp_coeff[8]);
-        write_coeff(4'd5,  bp_coeff[5]);
-        write_coeff(4'd12, bp_coeff[12]);
-        write_coeff(4'd10, bp_coeff[10]);
+        FIREN = 0;
+        #80;
+        FIREN = 1;
 
-        // Allow the pending commit and filter operation to proceed.
-        wait_cycles(40);
+        #200;
 
-        // -----------------------------------------------------
-        // PHASE 3: HALT USING FIREN
-        // -----------------------------------------------------
-        @(negedge CLK);
-        FIREN = 1'b0;
+        CENWR = 1;
+        CADDR = 4'd10;
+        CDATA = hp_coeff[10];
+        #10;
+        CADDR = 4'd3;
+        CDATA = hp_coeff[3];
+        #10;
+        CADDR = 4'd14;
+        CDATA = hp_coeff[14];
+        #10;
+        CADDR = 4'd1;
+        CDATA = hp_coeff[1];
+        #10;
+        CADDR = 4'd8;
+        CDATA = hp_coeff[8];
+        #10;
+        CADDR = 4'd5;
+        CDATA = hp_coeff[5];
+        #10;
+        CADDR = 4'd12;
+        CDATA = hp_coeff[12];
 
-        wait_cycles(8);
+        #10;
+        CENWR = 0;
+        COMMIT = 1;
+        #10;
+        COMMIT = 0;
 
-        // -----------------------------------------------------
-        // PHASE 4: RESUME FILTER OPERATION
-        // -----------------------------------------------------
-        @(negedge CLK);
-        FIREN = 1'b1;
+        CENWR = 1;
+        CADDR = 4'd0;
+        CDATA = hp_coeff[0];
+        #10;
+        CADDR = 4'd15;
+        CDATA = hp_coeff[15];
+        #10;
+        CADDR = 4'd6;
+        CDATA = hp_coeff[6];
+        #10;
+        CADDR = 4'd11;
+        CDATA = hp_coeff[11];
+        #10;
+        CADDR = 4'd2;
+        CDATA = hp_coeff[2];
+        #10;
+        CADDR = 4'd9;
+        CDATA = hp_coeff[9];
+        #10;
+        CADDR = 4'd4;
+        CDATA = hp_coeff[4];
+        #10;
+        CADDR = 4'd13;
+        CDATA = hp_coeff[13];
+        #10;
+        CADDR = 4'd7;
+        CDATA = hp_coeff[7];
+        #10;
+        CENWR = 0;
+        CDATA = 0;
 
-        wait_cycles(20);
+        #600;
 
-        // -----------------------------------------------------
-        // PHASE 5: LOAD HIGHPASS WHILE FILTER IS RUNNING
-        //
-        // Active bandpass coefficients remain in h[] until
-        // the new complete set is committed.
-        // -----------------------------------------------------
-        write_coeff(4'd10, hp_coeff[10]);
-        write_coeff(4'd3,  hp_coeff[3]);
-        write_coeff(4'd14, hp_coeff[14]);
-        write_coeff(4'd1,  hp_coeff[1]);
-        write_coeff(4'd8,  hp_coeff[8]);
-        write_coeff(4'd5,  hp_coeff[5]);
-        write_coeff(4'd12, hp_coeff[12]);
+        FIREN = 0;
+        #50;
+        RSTn = 0;
 
-        // Early commit while the filter continues running.
-        send_commit();
-
-        write_coeff(4'd0,  hp_coeff[0]);
-        write_coeff(4'd15, hp_coeff[15]);
-        write_coeff(4'd6,  hp_coeff[6]);
-        write_coeff(4'd11, hp_coeff[11]);
-        write_coeff(4'd2,  hp_coeff[2]);
-        write_coeff(4'd9,  hp_coeff[9]);
-        write_coeff(4'd4,  hp_coeff[4]);
-        write_coeff(4'd13, hp_coeff[13]);
-        write_coeff(4'd7,  hp_coeff[7]);
-
-        // -----------------------------------------------------
-        // PHASE 6: OBSERVE HIGHPASS OPERATION
-        // -----------------------------------------------------
-        wait_cycles(60);
-
-        // -----------------------------------------------------
-        // PHASE 7: HALT, THEN ASSERT RESET AGAIN
-        // -----------------------------------------------------
-        @(negedge CLK);
-        FIREN = 1'b0;
-
-        wait_cycles(5);
-
-        @(negedge CLK);
-        RSTn = 1'b0;
-
-        // Synchronous datapath reset is observed on clock edge.
-        wait_cycles(3);
-
+        #30;
         $finish;
     end
 
