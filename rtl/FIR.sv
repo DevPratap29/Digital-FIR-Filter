@@ -55,7 +55,6 @@ always_ff @(posedge CLK or negedge RSTn) begin
         DONE<=1'b0;
     end
 end
-
 // Filter math: synchronous reset, so r and y_out can be packed inside the DSP slices
 always_ff @(posedge CLK) begin
     if(!RSTn) begin
